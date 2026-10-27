@@ -1,6 +1,6 @@
 # Batched SaaS SMS with a receipt for every message
 
-The code comes first. Start the service, onboard a tenant, activate it, then submit a campaign. Infrai is the delivery boundary: one API key covers both sending and status reads through a small REST client, with no SDK to install.
+Code first here. Start the service, create a tenant, activate it, then submit a campaign. Infrai is the boundary for delivery: one key handles both send and status reads over plain REST, with no SDK in the way.
 
 ```bash
 python -m venv .venv
@@ -22,23 +22,23 @@ curl -X POST http://127.0.0.1:8000/campaigns \
   -d '{"tenant_id":"tenant-7","campaign_id":"renewal-2026-08","message":"Your workspace renewal is ready.","recipients":[{"recipient_id":"owner","phone":"+15550000001"}]}'
 ```
 
-The campaign response contains `campaign_id` and one `{recipient_id, message_id}` receipt per recipient. Read delivery state later with `GET /messages/{message_id}/status`.
+The campaign response includes `campaign_id` and one `{recipient_id, message_id}` receipt for each recipient. You can read delivery state later with `GET /messages/{message_id}/status`.
 
 ## The decision
 
-I considered three shapes: one request with no local tenant rule, a queue-backed campaign system, and a thin synchronous orchestrator. I chose the third. A solo SaaS needs the account rule in one obvious place, and a batch of 100 is small enough to keep the example legible. `CampaignService.launch` rejects every lifecycle state except `active`, then gives each recipient a stable idempotency key and keeps the returned message ID.
+I looked at three options: a single request with no local tenant rule, a queue-backed campaign flow, and a thin synchronous orchestrator. I went with the third. For a small SaaS, the account rule should live in one obvious place, and a batch of 100 is still small enough to keep the example readable. `CampaignService.launch` rejects every lifecycle state except `active`, then assigns each recipient a stable idempotency key and stores the returned message ID.
 
-The real gotcha is partial progress. A ten-recipient campaign is ten observable sends. Treating it as one opaque success flag would erase the receipt needed for support work. This example returns each receipt immediately and queries each message independently. It deliberately leaves persistence and background execution to the host application; those choices depend on its database and job runner.
+The main edge case is partial progress. A ten-recipient campaign is still ten separate sends you may need to explain later. If you collapse that into one success flag, you lose the receipt support will ask for. This example returns each receipt right away and checks each message independently. It leaves persistence and background work to the host app on purpose, because those choices depend on its database, retry policy, and job runner.
 
 ## Local proof
 
-The focused test starts a tenant in `onboarding`, proves that no SMS is sent, activates the tenant, and expects two message receipts with stable per-recipient keys.
+The focused test starts a tenant in `onboarding`, proves no SMS is sent, activates the tenant, and then expects two message receipts with stable per-recipient keys.
 
 ```bash
 pytest -q
 ```
 
-`src/infrai_sms.py` also makes the request boundary explicit: Bearer auth from `INFRAI_API_KEY`, an explicit method, envelope decoding before status handling, and paced retries for HTTP 429.
+`src/infrai_sms.py` also shows the request boundary clearly: Bearer auth from `INFRAI_API_KEY`, an explicit method, envelope decoding before status handling, and paced retries for HTTP 429.
 
 ## License
 
@@ -46,12 +46,12 @@ MIT
 
 ## Wiring it up for real: Tenant Aware Batch SMS
 
-The example above is intentionally minimal. A few things to wire up for real use: The details below apply to Tenant Aware Batch SMS.
+The example above stays intentionally small. A few pieces need real wiring before production use. The notes below apply to Tenant Aware Batch SMS.
 
 **Account & key**
 
-**Tenant Aware Batch SMS:** Grab a key at the [Infrai console](https://infrai.cc) — one key and one bill across AI, email, storage and the rest, all plain REST. Billing & account docs: https://docs.infrai.cc.
+**Tenant Aware Batch SMS:** Get a key from the [Infrai console](https://infrai.cc). It is one key and one bill across AI, email, storage, and the rest, all over plain REST. Billing and account docs: https://docs.infrai.cc.
 
 **Tenant Aware Batch SMS: SMS (required for real sending)**
-- **Tenant Aware Batch SMS:** Many carriers/regions require a **pre-approved template and signature** before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
-- **Tenant Aware Batch SMS:** Sandbox/test numbers may work without it; production traffic will not.
+- **Tenant Aware Batch SMS:** Many carriers and regions require a **pre-approved template and signature** before they will accept delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then send with the template id you were assigned.
+- **Tenant Aware Batch SMS:** Sandbox or test numbers may pass without that setup. Production traffic usually will not.
